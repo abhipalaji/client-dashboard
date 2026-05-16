@@ -6,36 +6,23 @@ import {
 import { showToast, toggleButtonState } from './ui.js';
 
 // =========================================================================
-// 1. Classic Sign In Handler
+// 1. Password-Based Sign In
 // =========================================================================
 const loginForm = document.getElementById('login-form');
 if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
-        // Stop the browser from reloading the page instantly
         e.preventDefault(); 
-
-        const emailInput = document.getElementById('email');
-        const passwordInput = document.getElementById('password');
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
         const btn = document.getElementById('login-btn');
 
-        if (!emailInput || !passwordInput) {
-            showToast("Form inputs missing. Check your HTML IDs.", "error");
-            return;
-        }
-
-        const email = emailInput.value.trim();
-        const password = passwordInput.value;
-
         toggleButtonState(btn, true);
-
         try {
             await signInWithEmailAndPassword(auth, email, password);
             showToast('Logged in successfully!', 'success');
-            
-            // Redirect to dashboard
             window.location.href = 'dashboard.html';
         } catch (error) {
-            console.error("Login failed:", error);
+            console.error(error);
             showToast(error.message, 'error');
             toggleButtonState(btn, false, 'Sign in');
         }
@@ -43,55 +30,71 @@ if (loginForm) {
 }
 
 // =========================================================================
-// 2. Interactive Sign Up Handler (Saves new emails to Firebase)
+// 2. Interactive Sign Up Engine
 // =========================================================================
 const signupForm = document.getElementById('signup-form');
 if (signupForm) {
     signupForm.addEventListener('submit', async (e) => {
-        // Stop the browser from reloading the page instantly
         e.preventDefault(); 
-
-        const emailInput = document.getElementById('signup-email');
-        const passwordInput = document.getElementById('signup-password');
+        const email = document.getElementById('signup-email').value.trim();
+        const password = document.getElementById('signup-password').value;
         const btn = document.getElementById('signup-btn');
 
-        if (!emailInput || !passwordInput) {
-            showToast("Form inputs missing. Check your HTML IDs.", "error");
+        toggleButtonState(btn, true);
+        try {
+            await createUserWithEmailAndPassword(auth, email, password);
+            showToast('Account created successfully!', 'success');
+            setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
+        } catch (error) {
+            let msg = error.message;
+            if (error.code === 'auth/email-already-in-use') msg = 'Email already registered.';
+            if (error.code === 'auth/weak-password') msg = 'Password should be at least 6 characters.';
+            showToast(msg, 'error');
+            toggleButtonState(btn, false, 'Create Account');
+        }
+    });
+}
+
+// =========================================================================
+// 3. Live-Adaptive Passkey Login
+// =========================================================================
+const passkeyLoginBtn = document.getElementById('btn-passkey-login');
+if (passkeyLoginBtn) {
+    passkeyLoginBtn.addEventListener('click', async () => {
+        if (!window.PublicKeyCredential) {
+            showToast('Passkeys are unavailable on this browser.', 'error');
             return;
         }
 
-        const email = emailInput.value.trim();
-        const password = passwordInput.value;
+        const savedCredId = localStorage.getItem('codecrest_passkey_credential_id');
+        if (!savedCredId) {
+            showToast('No passkey linked yet. Log in with a password first.', 'error');
+            return;
+        }
 
-        toggleButtonState(btn, true);
-
+        toggleButtonState(passkeyLoginBtn, true);
         try {
-            // This natively registers the new email inside Firebase Authentication console
-            await createUserWithEmailAndPassword(auth, email, password);
-            
-            showToast('Account created successfully!', 'success');
-            
-            // Short delay to allow session sync before moving to dashboard
-            setTimeout(() => {
-                window.location.href = 'dashboard.html';
-            }, 1200);
+            const challenge = new Uint8Array(32);
+            window.crypto.getRandomValues(challenge);
+            const rawIdBuffer = Uint8Array.from(atob(savedCredId), c => c.charCodeAt(0));
 
-        } catch (error) {
-            console.error("Signup failed:", error);
-            
-            let clearErrorMessage = "Registration failed. Please check your inputs.";
-            if (error.code === 'auth/email-already-in-use') {
-                clearErrorMessage = 'This email address is already registered.';
-            } else if (error.code === 'auth/invalid-email') {
-                clearErrorMessage = 'Please enter a valid email address.';
-            } else if (error.code === 'auth/weak-password') {
-                clearErrorMessage = 'Password is too weak. Use at least 6 characters.';
-            } else {
-                clearErrorMessage = error.message;
+            const options = {
+                challenge: challenge,
+                timeout: 60000,
+                rpId: window.location.hostname, // Securely matches active domain
+                allowCredentials: [{ id: rawIdBuffer, type: 'public-key' }],
+                userVerification: "preferred"
+            };
+
+            const assertion = await navigator.credentials.get({ publicKey: options });
+            if (assertion) {
+                showToast('Biometric access authorized!', 'success');
+                setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
             }
-
-            showToast(clearErrorMessage, 'error');
-            toggleButtonState(btn, false, 'Create Account');
+        } catch (error) {
+            console.error(error);
+            showToast('Verification rejected or timed out.', 'error');
+            toggleButtonState(passkeyLoginBtn, false, 'Sign in with Passkey');
         }
     });
 }
